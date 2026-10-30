@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bench-v7x-16-flex-tp2-dp16-highconc
+  namespace: default
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: default
+      restartPolicy: OnFailure
+      nodeSelector:
+        cloud.google.com/gke-nodepool: default-pool
+      containers:
+      - name: bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-bench:v0.32.0
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "-c"]
+        args:
+        - |
+          import aiohttp, asyncio, json, sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          sys.path.insert(0, "/scripts")
+          import run_tpu_benchmark_sweep as sweep
+
+          base_url = "http://vllm-v7x-16-flex-svc:8000"
+          model_id = sweep.wait_for_server(base_url, timeout_s=600)
+          sanity = sweep.run_sanity_check(base_url, model_id)
+          ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+          safe_model = model_id.strip("/").replace("/", "__")
+          slice_name = "v7x-16-flex-2x2x4-32cores"
+          config_tag = "glm53-fp8-tp2-dp16-ep32-highconc-and-15k-prefixcache"
+          out_dir = Path("/models/benchmark-results") / f"{slice_name}__{safe_model}__{config_tag}__{ts}"
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          async def warm_all_dp_engines(input_tokens: int, prefix_hit_ratio: float = 0.8, n_warm: int = 48):
+              url = f"{base_url}/v1/completions"
+              shared_len = int(input_tokens * prefix_hit_ratio)
+              unique_len = max(32, input_tokens - shared_len)
+              shared_prefix = sweep._build_word_block(shared_len, seed=42)
+              prompts = [(shared_prefix + " " + sweep._build_word_block(unique_len, seed=9000 + i)).strip() for i in range(n_warm)]
+              sem = asyncio.Semaphore(16)
+              async with aiohttp.ClientSession() as session:
+                  await asyncio.gather(*[sweep._stream_one_request(session, url, model_id, p, 8, sem) for p in prompts])
+
+          all_rows = []
+          # 1. Warmed 15K Long-Context 80% Prefix-Cache Hit Sweep across all 16 DP engines (16.60M KV tokens)
+          asyncio.run(warm_all_dp_engines(15000, 0.8, 48))
+          for c in [1, 8, 16, 32]:
+              row = asyncio.run(
+                  sweep.run_streaming_benchmark(base_url, model_id, 15000, 512, c, max(c * 2, 8), prefix_hit_ratio=0.8)
+              )
+              row["suite"] = "cached_80pct_15k"
+              all_rows.append(row)
+
+          # 2. High-concurrency 80% Prefix-Cache Hit Sweep at 4K context (c=64, 128, 256, 512)
+          asyncio.run(warm_all_dp_engines(4096, 0.8, 48))
+          for c in [64, 128, 256, 512]:
+              n_prompts = c * 2 if c <= 256 else 512
+              row = asyncio.run(
+                  sweep.run_streaming_benchmark(base_url, model_id, 4096, 512, c, n_prompts, prefix_hit_ratio=0.8)
+              )
+              row["suite"] = "cached_80pct_4k_highconc"
+              all_rows.append(row)
+
+          # 3. High-concurrency 0% Cache Cluster Saturation across all 16 DP engines (max_num_seqs=64 * 16 = 1024!)
+          for c in [128, 256, 512]:
+              n_prompts = c * 2 if c <= 256 else 512
+              row = asyncio.run(
+                  sweep.run_streaming_benchmark(base_url, model_id, 4096, 512, c, n_prompts, prefix_hit_ratio=0.0)
+              )
+              row["suite"] = "high_concurrency_0pct_cache"
+              all_rows.append(row)
+
+          meta = {
+              "timestamp_utc": ts,
+              "slice_name": slice_name,
+              "config_tag": config_tag,
+              "model_id": model_id,
+              "tokenizer": "/models/models/zai-org/GLM-5.3",
+              "max_input_len": 15000,
+              "output_len": 512,
+          }
+          payload = {"meta": meta, "sanity": sanity, "results": all_rows}
+          (out_dir / "summary.json").write_text(json.dumps(payload, indent=2))
+          md = sweep.render_markdown(meta, sanity, all_rows)
+          (out_dir / "REPORT.md").write_text(md)
+          print(md, flush=True)
+          print(f"[tpu-bench] Saved TP=2 DP=16 high-concurrency + 15K prefix-cache results to {out_dir}", flush=True)
+        volumeMounts:
+        - name: models-gcs
+          mountPath: /models
+        - name: bench-script
+          mountPath: /scripts
+      volumes:
+      - name: models-gcs
+        persistentVolumeClaim:
+          claimName: tpu-models-gcs-pvc
+      - name: bench-script
+        configMap:
+          name: tpu-bench-script
