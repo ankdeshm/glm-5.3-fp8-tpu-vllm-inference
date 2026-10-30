@@ -347,12 +347,21 @@ def main():
         all_rows.append(row)
 
     # 2. 80% Prefix-Cache Hit Sweep
-    for c in [x for x in concs if x in (1, 4, 8, 16)]:
+    for c in [x for x in concs if x in (1, 4, 8, 16, 32, 64)]:
         n_prompts = max(c * 2, 8)
         row = asyncio.run(
             run_streaming_benchmark(base_url, model_id, std_in, args.output_len, c, n_prompts, prefix_hit_ratio=0.8)
         )
         row["suite"] = "cached_80pct_prefix"
+        all_rows.append(row)
+
+    # 2B. 95% Prefix-Cache Hit Sweep
+    for c in [x for x in concs if x in (1, 4, 8, 16, 32, 64)]:
+        n_prompts = max(c * 2, 8)
+        row = asyncio.run(
+            run_streaming_benchmark(base_url, model_id, std_in, args.output_len, c, n_prompts, prefix_hit_ratio=0.95)
+        )
+        row["suite"] = "cached_95pct_prefix"
         all_rows.append(row)
 
     # 3. Context-length sweep at concurrency=4
