@@ -1,0 +1,261 @@
+apiVersion: leaderworkerset.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: vllm-v5p-16
+  namespace: default
+  annotations:
+    leaderworkerset.sigs.k8s.io/exclusive-topology: cloud.google.com/gke-nodepool
+spec:
+  replicas: 1
+  leaderWorkerTemplate:
+    size: 4
+    restartPolicy: RecreateGroupOnPodRestart
+    leaderTemplate:
+      metadata:
+        labels:
+          role: leader
+          app: vllm-v5p-16
+        annotations:
+          gke-gcsfuse/volumes: "true"
+      spec:
+        serviceAccountName: default
+        nodeSelector:
+          cloud.google.com/gke-nodepool: tpu-v5p-16-pool
+          cloud.google.com/gke-tpu-accelerator: tpu-v5p-slice
+          cloud.google.com/gke-tpu-topology: 2x2x4
+        tolerations:
+        - key: "google.com/tpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "cloud.google.com/gke-spot"
+          operator: "Exists"
+          effect: "NoSchedule"
+        containers:
+        - name: vllm-server
+          image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-bench:v0.32.0
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+          - |
+            set -e
+            mkdir -p /tmp/hf_cache /tmp/vllm_tmp
+            ray start --head --port=6379
+            until [ "$(python3 -c 'import ray; ray.init(address="auto", logging_level="ERROR"); print(sum(n["Alive"] for n in ray.nodes()))' 2>/dev/null)" = "4" ]; do
+              echo "Waiting for all 4 v5p hosts (16 chips, 1520 GB HBM) to join Ray cluster..."
+              sleep 8
+            done
+            ray status
+            vllm serve "${MODEL_PATH}" \
+              --served-model-name="${SERVED_MODEL_NAME}" \
+              --host=0.0.0.0 \
+              --port=8000 \
+              --tensor-parallel-size=2 \
+              --data-parallel-size=8 \
+              --enable-expert-parallel \
+              --enable-ep-weight-filter \
+              --kv-cache-dtype="${KV_CACHE_DTYPE}" \
+              --gpu-memory-utilization=0.90 \
+              --max-model-len="${MAX_MODEL_LEN}" \
+              --max-num-seqs=64 \
+              --max-num-batched-tokens="${MAX_NUM_BATCHED_TOKENS}" \
+              --enable-prefix-caching \
+              --safetensors-load-strategy=prefetch \
+              --async-scheduling \
+              --trust-remote-code \
+              ${EXTRA_VLLM_ARGS}
+          env:
+          # Primary: GLM-5.3 (756 GB FP8/W8A16); pure BF16 fallback: /models/models/zai-org/GLM-5.3-Flash-BF16
+          - name: MODEL_PATH
+            value: "/models/models/zai-org/GLM-5.3"
+          - name: SERVED_MODEL_NAME
+            value: "zai-org/GLM-5.3"
+          - name: KV_CACHE_DTYPE
+            value: "auto"
+          - name: MAX_MODEL_LEN
+            value: "16384"
+          - name: MAX_NUM_BATCHED_TOKENS
+            value: "4096"
+          - name: EXTRA_VLLM_ARGS
+            value: "--tool-call-parser=glm47 --reasoning-parser=glm45 --enable-auto-tool-choice"
+          - name: HF_HOME
+            value: "/tmp/hf_cache"
+          - name: TMPDIR
+            value: "/tmp/vllm_tmp"
+          - name: HUGGING_FACE_HUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-token
+                key: HF_TOKEN
+          - name: TPU_MULTIHOST_BACKEND
+            value: "ray"
+          - name: TPU_PROCESS_ADDRESSES
+            value: ""
+          - name: VLLM_PLUGINS
+            value: "torchtpu"
+          - name: VLLM_TARGET_DEVICE
+            value: "tpu"
+          - name: PJRT_DEVICE
+            value: "TPU"
+          - name: VLLM_WORKER_MULTIPROC_METHOD
+            value: "spawn"
+          - name: VLLM_ENGINE_READY_TIMEOUT_S
+            value: "3600"
+          ports:
+          - containerPort: 8000
+          resources:
+            limits:
+              google.com/tpu: "4"
+            requests:
+              google.com/tpu: "4"
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          volumeMounts:
+          - name: models-gcs
+            mountPath: /models
+          - name: dshm
+            mountPath: /dev/shm
+        volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+        - name: models-gcs
+          persistentVolumeClaim:
+            claimName: tpu-models-gcs-pvc
+    workerTemplate:
+      metadata:
+        labels:
+          role: worker
+          app: vllm-v5p-16
+        annotations:
+          gke-gcsfuse/volumes: "true"
+      spec:
+        serviceAccountName: default
+        nodeSelector:
+          cloud.google.com/gke-nodepool: tpu-v5p-16-pool
+          cloud.google.com/gke-tpu-accelerator: tpu-v5p-slice
+          cloud.google.com/gke-tpu-topology: 2x2x4
+        tolerations:
+        - key: "google.com/tpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "cloud.google.com/gke-spot"
+          operator: "Exists"
+          effect: "NoSchedule"
+        containers:
+        - name: vllm-server
+          image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-bench:v0.32.0
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+          - |
+            set -e
+            mkdir -p /tmp/hf_cache /tmp/vllm_tmp
+            until (echo > "/dev/tcp/${LWS_LEADER_ADDRESS}/6379") 2>/dev/null; do
+              echo "Waiting for Ray head at ${LWS_LEADER_ADDRESS}:6379..."
+              sleep 5
+            done
+            ray start --address="${LWS_LEADER_ADDRESS}:6379" --block
+          env:
+          - name: HF_HOME
+            value: "/tmp/hf_cache"
+          - name: TMPDIR
+            value: "/tmp/vllm_tmp"
+          - name: HUGGING_FACE_HUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-token
+                key: HF_TOKEN
+          - name: TPU_MULTIHOST_BACKEND
+            value: "ray"
+          - name: TPU_PROCESS_ADDRESSES
+            value: ""
+          - name: VLLM_PLUGINS
+            value: "torchtpu"
+          - name: VLLM_TARGET_DEVICE
+            value: "tpu"
+          - name: PJRT_DEVICE
+            value: "TPU"
+          - name: VLLM_WORKER_MULTIPROC_METHOD
+            value: "spawn"
+          - name: VLLM_ENGINE_READY_TIMEOUT_S
+            value: "3600"
+          resources:
+            limits:
+              google.com/tpu: "4"
+            requests:
+              google.com/tpu: "4"
+          volumeMounts:
+          - name: models-gcs
+            mountPath: /models
+          - name: dshm
+            mountPath: /dev/shm
+        volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+        - name: models-gcs
+          persistentVolumeClaim:
+            claimName: tpu-models-gcs-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-v5p-16-svc
+  namespace: default
+spec:
+  selector:
+    app: vllm-v5p-16
+    role: leader
+  type: ClusterIP
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8000
+    targetPort: 8000
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bench-v5p-16
+  namespace: default
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: default
+      restartPolicy: OnFailure
+      nodeSelector:
+        cloud.google.com/gke-nodepool: default-pool
+      containers:
+      - name: bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-bench:v0.32.0
+        command: ["python3", "/scripts/run_tpu_benchmark_sweep.py"]
+        args:
+        - --host=vllm-v5p-16-svc
+        - --port=8000
+        - --tokenizer=/models/models/zai-org/GLM-5.3
+        - --slice-name=v5p-16-2x2x4
+        - --config-tag=tp2-dp8-ep16-auto-prefixcache
+        - --max-input-len=12288
+        - --output-len=1024
+        - --concurrencies=1,4,8,16,32
+        - --context-lengths=2048,8192,12288
+        - --output-dir=/models/benchmark-results
+        volumeMounts:
+        - name: models-gcs
+          mountPath: /models
+        - name: bench-script
+          mountPath: /scripts
+      volumes:
+      - name: models-gcs
+        persistentVolumeClaim:
+          claimName: tpu-models-gcs-pvc
+      - name: bench-script
+        configMap:
+          name: tpu-bench-script

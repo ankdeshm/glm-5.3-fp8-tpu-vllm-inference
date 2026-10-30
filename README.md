@@ -1,6 +1,6 @@
 # `zai-org/GLM-5.3` (744B MoE FP8) Serving & Benchmarking on Cloud TPU `v7x` with `vllm-torchtpu`
 
-Reproducible multi-host deployment manifests, benchmark harness, speculative decoding (`MTP=3` with `IndexShare=True`), and intra-chip parallelism (`TP=2, DP=16, EP=32`) benchmarks for **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8, `147` safetensors shards) on **TPU v7x (`2x2x4`, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e)** using **`vllm 0.32.0` + `vllm-torchtpu` + `TorchTPU 0.2.0` GA**.
+Reproducible multi-host deployment manifests, benchmark harness, speculative decoding (`MTP=3` with `IndexShare=True`), and parallelism sweeps (`TP=2, DP=16, EP=32`, `TP=4, DP=8, EP=32`, `TP=8, DP=4, EP=32`) for **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8, `147` safetensors shards) on **TPU v7x (`2x2x4`, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e)** using **`vllm 0.32.0` + `vllm-torchtpu` + `TorchTPU 0.2.0` GA**.
 
 ---
 
@@ -17,12 +17,13 @@ Reproducible multi-host deployment manifests, benchmark harness, speculative dec
 | Configuration | Parallelism | Cluster FP8 MLA KV Capacity | `c=1` Stream TPS (`TPOT`) | `c=8` (`80%` Prefix Hit) Out TPS | `InferenceX` (`4096:1024`, `c=8`) | Peak Slice Output Throughput |
 |---|---|---:|---:|---:|---:|---:|
 | **Intra-Chip Throughput (`Pass 5/5B`)** | **`TP=2, DP=16, EP=32`** | **`16,596,992` (`16.60M` tok)** | `37.34` (`26.78 ms`) | `265.23` tok/s | `971.19` tot / `190.30` out tok/s | **`4,421.49` out tok/s** *(`c=512`, `80%` hit)* |
+| **Intra-Chip + `MTP=3` (`Pass 7`)** | **`TP=2, DP=16, EP=32 + MTP=3`** | **`16,187,392` (`16.19M` tok)** | **`53.64` (`18.80 ms`, `2.08x`)** | `248.46` tok/s *(`44.1` tok/s/stream)* | **`1,651.46` tot / `323.59` out tok/s (`1.70x`)** | `733.12` out tok/s *(`c=64`, `0%` hit)* |
 | **Interactive `MTP=3` (`Pass 2`)** | **`TP=4, DP=8, EP=32 + MTP=3`** | `9,035,776` (`9.04M` tok) | **`62.14` (`16.31 ms`, `1.96x`)** | **`288.86` tok/s** *(`49.1` tok/s/stream)* | **`1,978.57` tot / `387.69` out tok/s (`2.18x`)** | `683.03` out tok/s *(`c=64`, `0%` hit)* |
 | **Standard Baseline (`Pass 1A/1B`)** | `TP=4, DP=8, EP=32` | `9,248,768` (`9.25M` tok) | `31.83` (`31.42 ms`) | `244.20` tok/s | `905.55` tot / `177.44` out tok/s | `2,628.32` out tok/s *(`c=256`, `80%` hit)* |
 
 ### Core Engineering Takeaways
 1. **Intra-Chip `TP=2, DP=16, EP=32` (`+68.2%` Peak Throughput, `+79.5%` KV Cache):** Keeping Tensor Parallelism strictly within the 2 TensorCores on a single `v7x` die eliminates inter-chip TP all-reduces and halves MLA KV-cache replication, expanding KV capacity from `9.25M` -> **`16.60M` tokens** and scaling total output throughput to **`4,421.49` output tok/s** at `c=512` (`80%` prefix-cache hit) and **`2,645.53` output tok/s** at `0%` cache (`0` failed requests).
-2. **`MTP=3` Speculative Decoding (`IndexShare=True`, `1.96x–2.18x` Interactive Speedup):** Activating `--speculative-config='{"method":"mtp","num_speculative_tokens":3}'` reuses DSA Lightning Indexer top-k indices across draft positions (`index_share_for_mtp_iteration=True`), cutting single-stream TPOT from `31.45 ms` -> **`16.31 ms` (`62.14` stream tok/s)** and boosting `InferenceX` (`4096:1024`, `c=8`) throughput **`2.18x`** to **`1,978.57` total tok/s** (`15.33 ms` median TPOT).
+2. **`MTP=3` Speculative Decoding (`IndexShare=True`, `1.96x–2.18x` Interactive Speedup):** Activating `--speculative-config='{"method":"mtp","num_speculative_tokens":3}'` reuses DSA Lightning Indexer top-k indices across draft positions (`index_share_for_mtp_iteration=True`), cutting single-stream TPOT to **`16.31 ms` (`62.14` stream tok/s)** at `TP=4, DP=8` (`1,978.57` total tok/s on `InferenceX`) and **`18.80 ms` (`53.64` stream tok/s)** while retaining **`16.19M` KV tokens** at `TP=2, DP=16` (`Pass 7`).
 
 ---
 
@@ -57,4 +58,7 @@ kubectl apply -f k8s/v7x-16-flex-pass5b-highconc.yaml
 
 # 3B. Run TP=4, DP=8, EP=32 + MTP=3 IndexShare=True (Min Latency: 62.14 stream tok/s, 16.31 ms TPOT)
 kubectl apply -f k8s/v7x-16-spot-pass2-glm53-mtp3.yaml
+
+# 3C. Run Intra-Chip TP=2, DP=16, EP=32 + MTP=3 (16.19M KV tokens + 53.64 stream tok/s)
+kubectl apply -f k8s/v7x-16-flex-pass7-glm53-tp2-dp16-mtp3.yaml
 ```
