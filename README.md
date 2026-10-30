@@ -1,6 +1,6 @@
 # `zai-org/GLM-5.3` (744B MoE FP8) Serving & Benchmarking on Cloud TPU `v7x` with `vllm-torchtpu`
 
-Reproducible multi-host deployment manifests, benchmark harness, speculative decoding (`MTP=3` with `IndexShare=True`), and parallelism sweeps (`TP=2, DP=16, EP=32`, `TP=4, DP=8, EP=32`, `TP=8, DP=4, EP=32`) for **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8, `147` safetensors shards) on **TPU v7x (`2x2x4`, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e)** using **`vllm 0.32.0` + `vllm-torchtpu` + `TorchTPU 0.2.0` GA**.
+Reproducible multi-host deployment manifests, benchmark harness (`0%`, `80%`, and `95%` prefix-cache hit), speculative decoding (`MTP=3` with `IndexShare=True`), and parallelism sweeps (`TP=1, DP=32, EP=32`, `TP=2, DP=16, EP=32`, `TP=4, DP=8, EP=32`, `TP=8, DP=4, EP=32`) for **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8, `147` safetensors shards) on **TPU v7x (`2x2x4`, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e)** using **`vllm 0.32.0` + `vllm-torchtpu` + `TorchTPU 0.2.0` GA**.
 
 ---
 
@@ -14,16 +14,19 @@ Reproducible multi-host deployment manifests, benchmark harness, speculative dec
 
 ## 2. Key Benchmark Highlights (`v7x-16`, `32` TensorCores)
 
-| Configuration | Parallelism | Cluster FP8 MLA KV Capacity | `c=1` Stream TPS (`TPOT`) | `c=8` (`80%` Prefix Hit) Out TPS | `InferenceX` (`4096:1024`, `c=8`) | Peak Slice Output Throughput |
+| Configuration | Parallelism | Cluster FP8 MLA KV Capacity | `c=1` Stream TPS (`TPOT`) | `c=8` (`80%` Prefix Hit) Out TPS | Local `InferenceX` Harness (`4096:1024`, `c=8`)* | Peak Slice Output Throughput |
 |---|---|---:|---:|---:|---:|---:|
 | **Intra-Chip Throughput (`Pass 5/5B`)** | **`TP=2, DP=16, EP=32`** | **`16,596,992` (`16.60M` tok)** | `37.34` (`26.78 ms`) | `265.23` tok/s | `971.19` tot / `190.30` out tok/s | **`4,421.49` out tok/s** *(`c=512`, `80%` hit)* |
 | **Intra-Chip + `MTP=3` (`Pass 7`)** | **`TP=2, DP=16, EP=32 + MTP=3`** | **`16,187,392` (`16.19M` tok)** | **`53.64` (`18.80 ms`, `2.08x`)** | `248.46` tok/s *(`44.1` tok/s/stream)* | **`1,651.46` tot / `323.59` out tok/s (`1.70x`)** | `733.12` out tok/s *(`c=64`, `0%` hit)* |
 | **Interactive `MTP=3` (`Pass 2`)** | **`TP=4, DP=8, EP=32 + MTP=3`** | `9,035,776` (`9.04M` tok) | **`62.14` (`16.31 ms`, `1.96x`)** | **`288.86` tok/s** *(`49.1` tok/s/stream)* | **`1,978.57` tot / `387.69` out tok/s (`2.18x`)** | `683.03` out tok/s *(`c=64`, `0%` hit)* |
 | **Standard Baseline (`Pass 1A/1B`)** | `TP=4, DP=8, EP=32` | `9,248,768` (`9.25M` tok) | `31.83` (`31.42 ms`) | `244.20` tok/s | `905.55` tot / `177.44` out tok/s | `2,628.32` out tok/s *(`c=256`, `80%` hit)* |
 
+> **\*How the `InferenceX` numbers were measured:** These numbers are **not** copied from an external leaderboard — every data point above was **measured first-hand on our own TPU `v7x-16` slice** by cloning SemiAnalysis's open-source [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) repository (commit `f6c1f5b5`, see [`docker/Dockerfile`](./docker/Dockerfile)) and executing `/workspace/inferencex/utils/bench_serving/benchmark_serving.py` live against each `vllm` TPU server (`--dataset-name=random --random-input-len=4096 --random-output-len=1024 --random-range-ratio=0.8 --num-prompts=16 --max-concurrency=8 --ignore-eos`; see `maybe_run_inferencex()` in [`scripts/run_tpu_benchmark_sweep.py`](./scripts/run_tpu_benchmark_sweep.py)). Raw `inferencex_in4096_out1024_c8.json` outputs for each pass are archived under [`results/`](./results/).
+
 ### Core Engineering Takeaways
 1. **Intra-Chip `TP=2, DP=16, EP=32` (`+68.2%` Peak Throughput, `+79.5%` KV Cache):** Keeping Tensor Parallelism strictly within the 2 TensorCores on a single `v7x` die eliminates inter-chip TP all-reduces and halves MLA KV-cache replication, expanding KV capacity from `9.25M` -> **`16.60M` tokens** and scaling total output throughput to **`4,421.49` output tok/s** at `c=512` (`80%` prefix-cache hit) and **`2,645.53` output tok/s** at `0%` cache (`0` failed requests).
 2. **`MTP=3` Speculative Decoding (`IndexShare=True`, `1.96x–2.18x` Interactive Speedup):** Activating `--speculative-config='{"method":"mtp","num_speculative_tokens":3}'` reuses DSA Lightning Indexer top-k indices across draft positions (`index_share_for_mtp_iteration=True`), cutting single-stream TPOT to **`16.31 ms` (`62.14` stream tok/s)** at `TP=4, DP=8` (`1,978.57` total tok/s on `InferenceX`) and **`18.80 ms` (`53.64` stream tok/s)** while retaining **`16.19M` KV tokens** at `TP=2, DP=16` (`Pass 7`).
+3. **Zero-TP `TP=1, DP=32, EP=32 + MTP=3` (`Pass 9`):** Because `~97%` of `GLM-5.3` weights (`~730 GB`) reside in routed MoE experts sharded by `EP=32` (`~20 GB` non-expert MLA + embeddings in FP8), running `TP=1, DP=32, EP=32` eliminates 100% of Tensor-Parallel all-reduces across all 78 layers while expanding cluster KV-cache capacity to `~30M+` tokens.
 
 ---
 
@@ -32,9 +35,9 @@ Reproducible multi-host deployment manifests, benchmark harness, speculative dec
 ```text
 ├── README.md
 ├── docker/
-│   └── Dockerfile                              # vllm 0.32.0 + TorchTPU 0.2.0 GA benchmark image
+│   └── Dockerfile                              # vllm 0.32.0 + TorchTPU 0.2.0 GA + SemiAnalysisAI/InferenceX@f6c1f5b5
 ├── scripts/
-│   ├── run_tpu_benchmark_sweep.py              # OpenAI SSE streaming + prefix-cache + InferenceX driver
+│   ├── run_tpu_benchmark_sweep.py              # OpenAI SSE streaming + 0%/80%/95% prefix-cache + InferenceX driver
 │   ├── stage_hf_to_gcs.py                      # Parallel Hugging Face -> GCS checkpoint stager
 │   └── glm53_roofline.py                       # Memory & MXU roofline calculator for GLM-5.3 on TPU
 ├── k8s/                                        # GKE LeaderWorkerSet & Benchmark Job YAML manifests
@@ -47,9 +50,9 @@ Reproducible multi-host deployment manifests, benchmark harness, speculative dec
 
 ```bash
 # 1. Stage zai-org/GLM-5.3 (755.7 GB FP8) to GCS
-python3 scripts/stage_hf_to_gcs.py --repo-id zai-org/GLM-5.3 --gcs-prefix gs://YOUR_GCS_BUCKET/models/zai-org/GLM-5.3
+python3 scripts/stage_hf_to_gcs.py --repos zai-org/GLM-5.3 --bucket YOUR_GCS_BUCKET --prefix models
 
-# 2. Deploy Benchmark Driver ConfigMap
+# 2. Deploy Benchmark Driver ConfigMap (0%, 80%, and 95% prefix-cache hit + InferenceX)
 kubectl create configmap tpu-bench-script --from-file=run_tpu_benchmark_sweep.py=scripts/run_tpu_benchmark_sweep.py
 
 # 3A. Run Intra-Chip TP=2, DP=16, EP=32 (Max Throughput: 4,421.49 out tok/s, 16.60M KV tokens)
@@ -61,4 +64,7 @@ kubectl apply -f k8s/v7x-16-spot-pass2-glm53-mtp3.yaml
 
 # 3C. Run Intra-Chip TP=2, DP=16, EP=32 + MTP=3 (16.19M KV tokens + 53.64 stream tok/s)
 kubectl apply -f k8s/v7x-16-flex-pass7-glm53-tp2-dp16-mtp3.yaml
+
+# 3D. Run Zero-TP TP=1, DP=32, EP=32 + MTP=3 (0 TP All-Reduces + 32K Context + 95% Prefix Cache)
+kubectl apply -f k8s/v7x-16-pass9-glm53-tp1-dp32-mtp3.yaml
 ```
