@@ -1,6 +1,6 @@
 # `GLM-5.3` FP8 Serving on TPU `v7x` with `vllm-torchtpu`
 
-Multi-host deployment manifests, benchmark harness (`0%`, `80%`, and `95%` prefix-cache hit), speculative decoding (`MTP=3` with `IndexShare=True`), and parallelism sweeps (`TP=1, DP=32, EP=32`, `TP=2, DP=16, EP=32`, `TP=4, DP=8, EP=32`, `TP=8, DP=4, EP=32`) for **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8, `147` safetensors shards) on **TPU v7x (`2x2x4`, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e)** using **`vllm 0.32.0` + `vllm-torchtpu` + `TorchTPU 0.2.0` GA**.
+Multi-host deployment manifests, benchmark harness (`0%`, `80%`, and `95%` prefix-cache hit), speculative decoding (`MTP=3` with `IndexShare=True`), and parallelism sweeps (`TP=1, DP=32, EP=32`, `TP=2, DP=16, EP=32`, `TP=4, DP=8, EP=32`, `TP=8, DP=4, EP=32`) for **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8, `147` safetensors shards) on **TPU v7x (`2x2x4`, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e)** and **TPU v5p-16 (`W8A16`, section 2B)** using **`vllm 0.32.0` + `vllm-torchtpu` + `TorchTPU 0.2.0` GA**.
 
 - **Result Directory Guide (`Pass 1A` → `Pass 9`):** [`results/README.md`](./results/README.md)
 
@@ -33,6 +33,21 @@ Each row links to the Kubernetes manifest, benchmark harness function (`#line`),
 1. **Intra-Chip `TP=2, DP=16, EP=32` (`Pass 1A` to `Pass 5B`, `2,628.32` to `4,421.49` out tok/s):** Keeping Tensor Parallelism within the 2 TensorCores on a single `v7x` die ([`k8s/v7x-16-flex-pass5-glm53-tp2-dp16.yaml`](./k8s/v7x-16-flex-pass5-glm53-tp2-dp16.yaml)) avoids inter-chip TP all-reduces and halves MLA KV-cache replication, increasing KV capacity from `9.25M` to `16.60M` tokens and scaling output throughput from `2,628.32` to `4,421.49` output tok/s at `c=512` (`80%` prefix-cache hit).
 2. **`MTP=3` Speculative Decoding (`IndexShare=True`, `31.42 ms` to `13.93 ms` TPOT):** Enabling `--speculative-config='{"method":"mtp","num_speculative_tokens":3}'` reuses DSA Lightning Indexer top-k indices across draft positions (`index_share_for_mtp_iteration=True`), improving stream throughput from `31.83` tok/s (`31.42 ms` TPOT) to `72.66` tok/s (`13.93 ms` TPOT) at `95%` prefix-cache hit (`c=4`) and `2,160.34` total / `423.31` output tok/s (`2.39x`) on `InferenceX` ([`Pass 8`](./k8s/v7x-16-flex-pass8-glm53-tp8-dp4-mtp3.yaml)).
 3. **Zero-TP `TP=1, DP=32, EP=32 + MTP=3` (`Pass 9`):** Because `~97%` of `GLM-5.3` weights (`~730 GB`) reside in routed MoE experts sharded by `EP=32`, [`k8s/v7x-16-pass9-glm53-tp1-dp32-mtp3.yaml`](./k8s/v7x-16-pass9-glm53-tp1-dp32-mtp3.yaml) removes TP all-reduces across all 78 layers while expanding cluster KV-cache capacity to `~30M+` tokens.
+
+---
+
+## 2B. TPU `v5p-16` (16 chips): FP8 checkpoint served as `W8A16`
+
+Same `zai-org/GLM-5.3` block-FP8 checkpoint and serving stack on a TPU `v5p-16` slice (`2x2x4` = 4 hosts x 4 chips, `95 GB` HBM per chip = `1.52 TB`). `v5p` has no FP8 matrix unit, so the FP8 weights stay FP8 in HBM and are up-converted to BF16 for each matmul (**`W8A16`**); the KV cache is FP8 (required by the DSA sparse-MLA kernel).
+
+| Configuration | Parallelism (16 chips) | Stream TPS (`TPOT`), `c=1` | `c=64` Out TPS (`0%` / `80%` / `95%` prefix hit) | `InferenceX` (`4096:1024`, `c=8`) | Result Files |
+|---|---|---:|---:|---:|---|
+| **`W8A16`, custom sparse-MLA backend** | **`TP=4, DP=4, EP=16`** | **`21.61`** (`46.3 ms`) | **`545.15`** / **`655.26`** / **`743.43`** | `561.70` tot / `110.06` out tok/s (`62.4 ms` TPOT) | [`REPORT`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/REPORT.md) · [`JSON`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/summary.json) · [`InfX`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/inferencex_in4096_out1024_c8.json) |
+| `W8A16` + `MTP=3` | `TP=4, DP=4, EP=16` | running | running | running | - |
+
+- **Throughput vs concurrency (`4096` in / `1024` out, `0%` prefix hit):** `20.18` (`c=1`), `82.34` (`c=4`), `144.87` (`c=8`), `249.10` (`c=16`), `410.50` (`c=32`), `545.15` (`c=64`) output tok/s; all requests succeeded. Context sweep at `c=4`: `81.94` (`2K`), `76.36` (`8K`), `69.77` (`15K`) output tok/s.
+- **`v5p`-specific changes (all in the suite runner, no model changes):** (1) the sparse-MLA KV cache uses the TensorCore layout (`TPU_SPARSE_MLA_NOPE_LAYOUT=tensorcore`, `TPU_SPARSE_MLA_ROPE_LAYOUT=tensorcore`) because the default SparseCore layout gathers with 16-lane DMAs and the `v5p` SparseCore has 8 lanes; (2) the Lightning-Indexer top-k falls back from the SparseCore kernel to exact TensorCore `jax.lax.top_k` when `sc.num_lanes != 16` (same padding semantics); (3) `--max-num-batched-tokens=512`, `--gpu-memory-utilization=0.86`, `compile_sizes=[4,16,64,256,512]`.
+- **Not directly comparable to the `v7x-16` rows above:** different chip (`v5p` BF16 compute vs `v7x` native FP8), half the TensorCores (16 vs 32) and half the HBM (`1.52 TB` vs `3.07 TB`).
 
 ---
 
