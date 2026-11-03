@@ -42,12 +42,13 @@ Same `zai-org/GLM-5.3` block-FP8 checkpoint and serving stack on a TPU `v5p-16` 
 
 | Configuration | Parallelism (16 chips) | Stream TPS (`TPOT`), `c=1` | `c=64` Out TPS (`0%` / `80%` / `95%` prefix hit) | `InferenceX` (`4096:1024`, `c=8`) | Result Files |
 |---|---|---:|---:|---:|---|
-| **`W8A16`, custom sparse-MLA backend** | **`TP=4, DP=4, EP=16`** | **`21.61`** (`46.3 ms`) | **`545.15`** / **`655.26`** / **`743.43`** | `561.70` tot / `110.06` out tok/s (`62.4 ms` TPOT) | [`REPORT`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/REPORT.md) · [`JSON`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/summary.json) · [`InfX`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/inferencex_in4096_out1024_c8.json) |
-| `W8A16` + `MTP=3` | `TP=4, DP=4, EP=16` | running | running | running | - |
+| **`W8A16`, custom sparse-MLA backend** | **`TP=4, DP=4, EP=16`** | `21.61` (`46.3 ms`) | **`545.15`** / **`655.26`** / **`743.43`** | `561.70` tot / `110.06` out tok/s (`62.4 ms` TPOT, `1.00x`) | [`REPORT`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/REPORT.md) · [`JSON`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/summary.json) · [`InfX`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout__20261103T020625Z/inferencex_in4096_out1024_c8.json) |
+| **`W8A16` + `MTP=3` (`IndexShare=True`)** | **`TP=4, DP=4, EP=16 + MTP=3`** | **`32.12` (`32.1 ms`)** · **`35.41` (`29.7 ms`, `80%`)** | `392.87` / `385.32` / `453.72` | **`897.99` tot / `175.95` out tok/s (`34.5 ms` TPOT, `1.60x`)** | [`REPORT`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout-mtp3__20261103T034545Z/REPORT.md) · [`JSON`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout-mtp3__20261103T034545Z/summary.json) · [`InfX`](./results/v5p-16-spot-2x2x4-16chips__zai-org__GLM-5.3__glm53-w8a16-tp4-dp4-ep16-custom-fp8kv-tclayout-mtp3__20261103T034545Z/inferencex_in4096_out1024_c8.json) |
 
-- **Throughput vs concurrency (`4096` in / `1024` out, `0%` prefix hit):** `20.18` (`c=1`), `82.34` (`c=4`), `144.87` (`c=8`), `249.10` (`c=16`), `410.50` (`c=32`), `545.15` (`c=64`) output tok/s; all requests succeeded. Context sweep at `c=4`: `81.94` (`2K`), `76.36` (`8K`), `69.77` (`15K`) output tok/s.
-- **`v5p`-specific changes (all in the suite runner, no model changes):** (1) the sparse-MLA KV cache uses the TensorCore layout (`TPU_SPARSE_MLA_NOPE_LAYOUT=tensorcore`, `TPU_SPARSE_MLA_ROPE_LAYOUT=tensorcore`) because the default SparseCore layout gathers with 16-lane DMAs and the `v5p` SparseCore has 8 lanes; (2) the Lightning-Indexer top-k falls back from the SparseCore kernel to exact TensorCore `jax.lax.top_k` when `sc.num_lanes != 16` (same padding semantics); (3) `--max-num-batched-tokens=512`, `--gpu-memory-utilization=0.86`, `compile_sizes=[4,16,64,256,512]`.
-- **Not directly comparable to the `v7x-16` rows above:** different chip (`v5p` BF16 compute vs `v7x` native FP8), half the TensorCores (16 vs 32) and half the HBM (`1.52 TB` vs `3.07 TB`).
+- **Non-MTP throughput vs concurrency (`4096` in / `1024` out, `0%` prefix hit):** `20.18` (`c=1`), `82.34` (`c=4`), `144.87` (`c=8`), `249.10` (`c=16`), `410.50` (`c=32`), `545.15` (`c=64`) output tok/s (`743.43` output tok/s at `c=64`, `95%` prefix hit); all requests succeeded. Context sweep at `c=4`: `81.94` (`2K`), `76.36` (`8K`), `69.77` (`15K`) output tok/s.
+- **`MTP=3` interactive latency & `InferenceX` speedup on `v5p-16`:** Enabling `--speculative-config='{"method":"mtp","num_speculative_tokens":3}'` accelerates single-stream decode from `21.61` tok/s (`46.3 ms` TPOT) to `32.12` tok/s (`32.1 ms` TPOT, `1.49x`) at `0%` prefix hit and `35.41` tok/s (`29.7 ms` TPOT) at `80%` prefix hit, while lifting `InferenceX` (`4096:1024`, `c=8`) throughput by **`1.60x`** (`897.99` total / `175.95` output tok/s at `34.5 ms` mean TPOT vs `561.70` / `110.06` at `62.4 ms`). For high-concurrency batching (`c >= 16`), non-MTP achieves higher slice throughput (`545.15`–`743.43` out tok/s at `c=64`) because `v5p` MXU compute saturates earlier when verifying 4 draft+target tokens per step.
+- **`v5p`-specific changes (all in [`k8s/v5p-16-glm53.yaml`](./k8s/v5p-16-glm53.yaml), no model weight changes):** (1) the sparse-MLA KV cache uses the TensorCore layout (`TPU_SPARSE_MLA_NOPE_LAYOUT=tensorcore`, `TPU_SPARSE_MLA_ROPE_LAYOUT=tensorcore`) because the default SparseCore layout gathers with 16-lane DMAs and the `v5p` SparseCore has 8 lanes; (2) the Lightning-Indexer top-k falls back from the SparseCore kernel to exact TensorCore `jax.lax.top_k` when `sc.num_lanes != 16` (same padding semantics); (3) `--max-num-batched-tokens=512`, `--gpu-memory-utilization=0.86`, `compile_sizes=[4,16,64,256,512]`.
+- **Hardware generation difference vs `v7x-16`:** `v5p-16` executes BF16 MXU compute (`W8A16` weight upcast) across 16 TensorCores (`1.52 TB` HBM2e), whereas `v7x-16` executes native FP8 MXU compute across 32 TensorCores (`3.07 TB` HBM3e).
 
 ---
 
@@ -58,7 +59,7 @@ Same `zai-org/GLM-5.3` block-FP8 checkpoint and serving stack on a TPU `v5p-16` 
 - [`scripts/stage_hf_to_gcs.py`](./scripts/stage_hf_to_gcs.py) — Parallel Hugging Face -> GCS checkpoint stager
 - [`scripts/glm53_roofline.py`](./scripts/glm53_roofline.py) — Memory & MXU roofline calculator for `GLM-5.3` on TPU
 - [`k8s/`](./k8s/) — GKE LeaderWorkerSet & Benchmark Job YAML manifests (`v7x-16`, `v6e-16/32`, `v5p-16`)
-- [`results/`](./results/README.md) — Raw JSON & Markdown benchmark outputs across all 8 passes
+- [`results/`](./results/README.md) — Raw JSON & Markdown benchmark outputs across `v7x-16` and `v5p-16` sweeps
 
 ```bash
 # 1. Stage zai-org/GLM-5.3 (755.7 GB FP8) to GCS
@@ -67,13 +68,16 @@ python3 scripts/stage_hf_to_gcs.py --repos zai-org/GLM-5.3 --bucket YOUR_GCS_BUC
 # 2. Deploy Benchmark Driver ConfigMap
 kubectl create configmap tpu-bench-script --from-file=run_tpu_benchmark_sweep.py=scripts/run_tpu_benchmark_sweep.py
 
-# 3A. Intra-Chip TP=2, DP=16, EP=32 (Max Throughput: 4,421.49 out tok/s, 16.60M KV tokens)
+# 3A. v7x-16 Intra-Chip TP=2, DP=16, EP=32 (Max Throughput: 4,421.49 out tok/s, 16.60M KV tokens)
 kubectl apply -f k8s/v7x-16-flex-pass5-glm53-tp2-dp16.yaml
 kubectl apply -f k8s/v7x-16-flex-pass5b-highconc.yaml
 
-# 3B. Intra-Host TP=8, DP=4, EP=32 + MTP=3 (Min Latency: 72.66 stream tok/s, 13.93 ms TPOT)
+# 3B. v7x-16 Intra-Host TP=8, DP=4, EP=32 + MTP=3 (Min Latency: 72.66 stream tok/s, 13.93 ms TPOT)
 kubectl apply -f k8s/v7x-16-flex-pass8-glm53-tp8-dp4-mtp3.yaml
 
-# 3C. Interactive TP=4, DP=8, EP=32 + MTP=3 (62.14 stream tok/s, 9.04M KV tokens)
+# 3C. v7x-16 Interactive TP=4, DP=8, EP=32 + MTP=3 (62.14 stream tok/s, 9.04M KV tokens)
 kubectl apply -f k8s/v7x-16-spot-pass2-glm53-mtp3.yaml
+
+# 3D. v5p-16 W8A16 TP=4, DP=4, EP=16 (+ optional MTP=3 via EXTRA_VLLM_ARGS)
+kubectl apply -f k8s/v5p-16-glm53.yaml
 ```
