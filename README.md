@@ -147,8 +147,7 @@ kubectl apply -f k8s/v7x-16-spot-pass2-glm53-mtp3.yaml
 kubectl apply -f k8s/v5p-16-glm53.yaml
 ```
 
+---
 
-
-
-
+*Note: Additional multi-slice and long-context colocation combinations (such as cross-pool `24`-chip `1P2D` disaggregation) were also attempted and encountered startup/coordination issues; see [`docs/ERROR_LOG.md`](./docs/ERROR_LOG.md) for failure details and fixes.*
 
