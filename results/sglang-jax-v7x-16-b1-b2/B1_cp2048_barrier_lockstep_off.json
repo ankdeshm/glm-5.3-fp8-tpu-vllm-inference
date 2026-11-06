@@ -1,0 +1,52 @@
+[
+  {
+    "mode": "prefill_cached",
+    "label": "cp2048_barrier_lockstep_off",
+    "lockstep_warmup": false,
+    "warmup_wall_s": 0.0,
+    "target_cached_prefix_tokens": 20480,
+    "target_uncached_suffix_tokens": 2048,
+    "concurrency": 32,
+    "num_chips": 16,
+    "dp_size": 16,
+    "total_requests": 128,
+    "ok_requests": 128,
+    "failed_requests": 0,
+    "wall_clock_s": 42.9065,
+    "mean_prompt_tokens": 22418.9,
+    "mean_cached_tokens": 15312.0,
+    "mean_uncached_tokens": 7106.9,
+    "observed_cache_hit_pct": 68.3,
+    "total_input_tok_per_s": 66880.75,
+    "total_input_tok_per_s_per_chip": 4180.05,
+    "uncached_tok_per_s": 21201.53,
+    "uncached_tok_per_s_per_chip": 1325.1,
+    "ttft_s": {
+      "mean": 10.1647,
+      "p50": 4.2987,
+      "p90": 29.8405,
+      "p99": 31.0808
+    },
+    "dp_rank_skew": {
+      "mean_ttft_per_rank_s": {
+        "0": 9.7917,
+        "1": 10.0538,
+        "2": 10.4356,
+        "3": 10.0481,
+        "4": 10.0529,
+        "5": 10.0206,
+        "6": 11.852,
+        "7": 10.1699,
+        "8": 9.7853,
+        "9": 10.4201,
+        "10": 9.9102,
+        "11": 10.316,
+        "12": 10.8502,
+        "13": 9.6771,
+        "14": 9.4609,
+        "15": 9.7908
+      },
+      "max_over_min_ttft_ratio": 1.2527
+    }
+  }
+]

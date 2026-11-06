@@ -21,8 +21,8 @@ spec:
         serviceAccountName: default
         nodeSelector:
           cloud.google.com/gke-nodepool: tpu-v6e-16-pool
-          cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
-          cloud.google.com/gke-tpu-topology: 4x4
+          cloud.google.com/tpu-v7x-worker-node: tpu-v6e-slice
+          cloud.google.com/tpu-v7x-worker-node: 4x4
         tolerations:
         - key: "google.com/tpu"
           operator: "Exists"
@@ -134,8 +134,8 @@ spec:
         serviceAccountName: default
         nodeSelector:
           cloud.google.com/gke-nodepool: tpu-v6e-16-pool
-          cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
-          cloud.google.com/gke-tpu-topology: 4x4
+          cloud.google.com/tpu-v7x-worker-node: tpu-v6e-slice
+          cloud.google.com/tpu-v7x-worker-node: 4x4
         tolerations:
         - key: "google.com/tpu"
           operator: "Exists"

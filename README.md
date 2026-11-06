@@ -1,50 +1,41 @@
-# `GLM-5.3` FP8 Serving on TPU `v7x` with `vllm-torchtpu`
+# `GLM-5.3` FP8 Serving on TPU `v7x` (`vllm-torchtpu` & `SGLang-JAX`)
 
-This repo has the deployment manifests, benchmark harness and results for serving **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`744B` total parameters, `755.7 GB` FP8 checkpoint, `147` safetensors shards) on TPU with vLLM + `vllm-torchtpu`.
+This repo has the deployment manifests, benchmark harnesses, analytical roofline models, and hardware results for serving **[`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3)** (`743.91B` total parameters, `40.83B` active target parameters + `1.47B` `NEXTN` MTP draft parameters, `755.7 GB` FP8 checkpoint across `147` safetensors shards) on Google Cloud TPU across **`vllm-torchtpu`** and **`SGLang-JAX` (`6a43163`)**:
 
-- **Primary target:** TPU v7x-16 (`2x2x4` topology, 16 chips / 32 TensorCores, `3,072 GiB` HBM3e).
-- **Secondary target:** TPU v5p-16, with the FP8 checkpoint served as `W8A16` (Section 2B).
+- **Primary target:** TPU `v7x-16` (`2x2x4` topology, 16 physical chips / 32 TensorCores, `3,072 GiB` HBM3e).
+- **Secondary target:** TPU `v5p-16`, with the FP8 checkpoint served as `W8A16` (Section 2B).
 - **What's covered:**
-  - Benchmarks at `0%`, `80%` and `95%` prefix-cache hit.
-  - Speculative decoding (`MTP=3` with `IndexShare=True`).
-  - A parallelism sweep across `TP=1/2/4/8` with `EP=32`.
+  - **`vllm-torchtpu` (`Pass 1A` → `Pass 9`, Section 2):** Parallelism sweep (`TP=1/2/4/8` with `EP=32`), `0%` / `80%` / `95%` prefix-cache hit, and `MTP=3` (`IndexShare=True`) up to **`4,421.49` out tok/s** (`TP=2, DP=16`) and **`72.66` stream tok/s** (`13.93 ms` TPOT, `TP=8, DP=4 + MTP=3`).
+  - **`SGLang-JAX` (`6a43163`, `Run B1` & `Run B2`, Section 2C):** Verified `0.0%`-hit long-context prefill (`32K` → `131K` `ISL`, **`22,577.3`–`21,284.6` uncached tok/s** with `chunked_prefill_size=2048`, **`184,893` cached prompt tok/s** at `91.1%` hit), **`NEXTN` (`4`-step / `5`-draft)** standalone decode (**`5,071.0` out tok/s** max at `n=128`, **`83.61` median stream tok/s** at `n=16`, **`2,043.0` out tok/s** gate-compliant `P90_low = 54.85` at `n=32`), analytical `HBM3e` / `MXU` rooflines, and multi-slice `xPyD` (`1P2D` / `2P1D`) disaggregation patches.
 
-**Result Directory Guide (`Pass 1A` → `Pass 9`):** [`results/README.md`](./results/README.md)
+**Result Directory Guide (`Pass 1A` → `Pass 9` & `SGLang-JAX B1/B2`):** [`results/README.md`](./results/README.md)
 
 ---
 
 ## 1. Model & Serving Stack
 
 - **Model:** [`zai-org/GLM-5.3`](https://huggingface.co/zai-org/GLM-5.3) (`GlmMoeDsaForCausalLM`).
-  - 78 Transformer layers plus 1 native Multi-Token Prediction (MTP) layer.
-  - 256 routed experts with top-8 routing.
-  - DeepSeek Sparse Attention (`DSA`) with a Lightning Indexer.
+  - 78 Transformer layers (`3` dense + `75` MoE) plus 1 native Multi-Token Prediction (`NEXTN` / `MTP`) layer.
+  - 256 routed experts with top-8 routing (`40.83B` active target parameters + `1.47B` active MTP draft parameters per token).
+  - DeepSeek Sparse Attention (`DSA`, top-`2048`) with a Lightning Indexer.
 - **Hardware:** 1× `v7x-16` slice.
   - `2x2x4` topology: 4 hosts × 4 chips = 16 chips / **32 TensorCores**.
-  - `96 GiB` HBM3e per TensorCore, `3,072 GiB` in total.
-  - Roofline model: [`scripts/glm53_roofline.py`](./scripts/glm53_roofline.py).
-- **Serving image (base):** `vllm/vllm-tpu:nightly-20261029-75749f8-2fb320d`, which provides vLLM + `vllm_torchtpu` + TorchTPU.
-  - Started with `--attention-backend=CUSTOM`.
-  - The TPU kernels used here come from this base image: Pallas Sparse MLA, the SparseCore Top-K Indexer and SparseCore hierarchical EP.
-  - Pin this exact nightly tag to reproduce the numbers below.
-- **Benchmark image:** built from [`docker/Dockerfile`](./docker/Dockerfile) on top of the base image. It adds:
-  - [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) at commit `f6c1f5b5`.
-  - The Hugging Face → GCS stager.
-  - The Run:AI model streamer, used for EP-filtered weight streaming from GCS.
-  - The benchmark sweep script.
-
-  It doesn't modify vLLM or the TPU kernels. The image path used by the jobs is set in the `image:` field of the manifests under [`k8s/`](./k8s/).
+  - `96 GiB` HBM3e per TensorCore (`192 GiB` / chip), `3,072 GiB` in total (`7,373 GB/s` HBM3e bandwidth and `4,614` FP8 TFLOP/s per physical chip).
+  - Roofline models: [`scripts/glm53_roofline.py`](./scripts/glm53_roofline.py) & [`scripts/dsv41_glm53_roofline.py`](./scripts/dsv41_glm53_roofline.py).
+- **Serving stacks evaluated:**
+  1. **`vllm-torchtpu` (Section 2 & 2B):** `vllm/vllm-tpu:nightly-20261029-75749f8-2fb320d` (`--attention-backend=CUSTOM`, Pallas Sparse MLA, SparseCore Top-K Indexer, SparseCore hierarchical EP), benchmarked with [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) (`f6c1f5b5`) via [`docker/Dockerfile`](./docker/Dockerfile).
+  2. **`SGLang-JAX` (Section 2C):** `sglang-jax` commit `6a43163` (`DP=16, TP=2, EP=32` across `16` physical chips, `DSA` Sparse MLA top-`2048`, `--speculative-algorithm NEXTN --speculative-num-steps 4 --speculative-eagle-topk 1 --speculative-num-draft-tokens 5`).
 
 > **Note:** The Dockerfile installs `runai-model-streamer` with `|| true`, so the build succeeds even if that install fails. Check that it installed (`pip show runai-model-streamer`) before deploying configurations that stream weights from GCS.
 
 ---
 
-## 2. Benchmark Results (`v7x-16`, `32` TensorCores)
+## 2. Benchmark Results — `vllm-torchtpu` (`v7x-16`, `32` TensorCores)
 
 Each row links to its Kubernetes manifest, the benchmark harness function (`#line`), and the `REPORT.md` / `summary.json` / `InferenceX` JSON outputs.
 
 | Configuration & Pass | Parallelism (`32` TC) | Cluster FP8 MLA KV | Stream TPS (`TPOT`) | `c=8` Out TPS (`80%` / `95%` prefix hit) | `InferenceX` (`4096:1024`, `c=8`)* | Peak Slice Output TPS (concurrency, prefix hit)** | Script & K8s Manifest | Result Files |
-|---|---|---:|---:|---:|---:|---:|---|---|
+|---|---|---|---|---|---|---|---|---|
 | **Intra-Chip High Throughput (`Pass 5 / 5B`)** | **`TP=2, DP=16, EP=32`** | **`16,596,992` (`16.60M`)** | `37.34` (`26.78 ms`) | `265.23` tok/s | `971.19` tot / `190.30` out (`1.07x`) | **`4,421.49` out tok/s** *(`c=512`, `80%`)* | [`sweep.py#L355`](./scripts/run_tpu_benchmark_sweep.py#L355-L370) · [`pass5`](./k8s/v7x-16-flex-pass5-glm53-tp2-dp16.yaml) · [`pass5b`](./k8s/v7x-16-flex-pass5b-highconc.yaml) | [`5A MD`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp2-dp16-ep32-prefixcache__20261030T145741Z/REPORT.md) · [`5B MD`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp2-dp16-ep32-highconc-and-15k-prefixcache__20261030T152048Z/REPORT.md) · [`5B JSON`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp2-dp16-ep32-highconc-and-15k-prefixcache__20261030T152048Z/summary.json) · [`InfX`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp2-dp16-ep32-prefixcache__20261030T145741Z/inferencex_in4096_out1024_c8.json) |
 | **Intra-Host Low Latency + `MTP=3` (`Pass 8`)** | **`TP=8, DP=4, EP=32 + MTP=3`** | `~4.90M` tok | **`72.66` (`13.93 ms`, `95%`, `c=4`)** · `66.24` (`c=1`) | **`310.43`** / **`338.76`** | **`2,160.34` tot / `423.31` out (`2.39x`)** | **`1,019.42` out tok/s** *(`c=64`, `95%`)* | [`sweep.py#L364`](./scripts/run_tpu_benchmark_sweep.py#L364-L371) · [`pass8.yaml`](./k8s/v7x-16-flex-pass8-glm53-tp8-dp4-mtp3.yaml) | [`REPORT`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp8-dp4-ep32-mtp3-prefixcache__20261030T200521Z/REPORT.md) · [`JSON`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp8-dp4-ep32-mtp3-prefixcache__20261030T200521Z/summary.json) · [`InfX`](./results/v7x-16-flex-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp8-dp4-ep32-mtp3-prefixcache__20261030T200521Z/inferencex_in4096_out1024_c8.json) |
 | **Interactive `MTP=3` (`Pass 2`)** | **`TP=4, DP=8, EP=32 + MTP=3`** | `9,035,776` (`9.04M`) | **`62.14` (`16.31 ms`, `80%`, `c=1`)** | `288.86` tok/s | **`1,978.57` tot / `387.69` out (`2.18x`)** | `683.03` out tok/s *(`c=64`, `0%`)* | [`sweep.py#L231`](./scripts/run_tpu_benchmark_sweep.py#L231-L295) · [`pass2.yaml`](./k8s/v7x-16-spot-pass2-glm53-mtp3.yaml) | [`REPORT`](./results/v7x-16-spot-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp4-dp8-ep32-mtp3-prefixcache__20261030T124702Z/REPORT.md) · [`JSON`](./results/v7x-16-spot-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp4-dp8-ep32-mtp3-prefixcache__20261030T124702Z/summary.json) · [`InfX`](./results/v7x-16-spot-2x2x4-32cores__zai-org__GLM-5.3__glm53-fp8-tp4-dp8-ep32-mtp3-prefixcache__20261030T124702Z/inferencex_in4096_out1024_c8.json) |
@@ -113,14 +104,49 @@ This section uses the same `zai-org/GLM-5.3` block-FP8 checkpoint and serving st
 
 ---
 
+## 2C. `SGLang-JAX` (`6a43163`) + `NEXTN` (`4`-Step / `5`-Draft) Long-Context Prefill & Decode on TPU `v7x-16`
+
+Evaluated on `16` physical TPU `v7x` chips (`2x2x4`, `DP=16, TP=2, EP=32`, `--speculative-algorithm NEXTN --speculative-num-steps 4 --speculative-eagle-topk 1 --speculative-num-draft-tokens 5`, [`scripts/bench_glm_ds_standalone.py`](./scripts/bench_glm_ds_standalone.py) & [`scripts/dsv41_glm53_roofline.py`](./scripts/dsv41_glm53_roofline.py)):
+
+### 2C.1 `Run B1` — Uncached Long-Context Prefill (`32K` → `131K`, `0.0%` Cache Hit Verified) & Chunk Size Ablation
+
+| Target `ISL` | Concurrency `c` | **`cp=2048` Uncached `tok/s`** (**`tok/s / chip`**) | `cp=2048` `TTFT P50 / P90` (`s`) | `cp=8192` Uncached `tok/s` (`tok/s / chip`) | **`cp=2048` Gain vs `cp=8192`** | Result Files |
+|---:|---:|---:|---:|---:|---:|---|
+| `32,768` | `4` | `7,725.9` (`482.9`) | `16.81 / 17.76` | `5,256.3` (`328.5`) | **`+47.0%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`cp8192`](./results/sglang-jax-v7x-16-b1-b2/B1_cp8192_uncached.json) |
+| `32,768` | `8` | `13,753.9` (`859.6`) | `18.49 / 19.42` | `8,946.0` (`559.1`) | **`+53.7%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`cp8192`](./results/sglang-jax-v7x-16-b1-b2/B1_cp8192_uncached.json) |
+| **`32,768`** | **`16` (`MAX`)** | **`22,577.3` (`1,411.1`)** | **`22.98 / 23.92`** | `14,190.6` (`886.9`) | **`+59.1%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`roofline`](./results/sglang-jax-v7x-16-b1-b2/analytical_rooflines.json) |
+| `100,000` | `8` | `13,177.1` (`823.6`) | `60.35 / 61.49` | `10,515.3` (`657.2`) | **`+25.3%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`cp8192`](./results/sglang-jax-v7x-16-b1-b2/B1_cp8192_uncached.json) |
+| **`100,000`** | **`16` (`MAX`)** | **`21,494.4` (`1,343.4`)** | **`73.65 / 74.76`** | `16,081.9` (`1,005.1`) | **`+33.7%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`roofline`](./results/sglang-jax-v7x-16-b1-b2/analytical_rooflines.json) |
+| `131,072` | `8` | `12,832.5` (`802.0`) | `81.20 / 82.46` | `10,281.6` (`642.6`) | **`+24.8%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`cp8192`](./results/sglang-jax-v7x-16-b1-b2/B1_cp8192_uncached.json) |
+| **`131,072`** | **`16` (`MAX`)** | **`21,284.6` (`1,330.3`)** | **`98.15 / 98.97`** | `15,822.8` (`988.9`) | **`+34.5%`** | [`cp2048`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_uncached.json) · [`roofline`](./results/sglang-jax-v7x-16-b1-b2/analytical_rooflines.json) |
+
+- **Flat `32K` → `131K` Scaling (`DSA` Top-`2048`):** Uncached prefill throughput drops by only **`5.7%`** across a `4×` context increase (`1,411.1` → `1,330.3 tok/s/chip`).
+- **RadixCache Prefix Hit (`91.06%` hit on `22.4K` `ISL`, [`B1_cp2048_cached_lockstep_on.json`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_cached_lockstep_on.json)):** Reaches **`184,893` total prompt `tok/s`** (`11,556/chip`, `TTFT P50 = 3.89 s`) at `c=32`, and **`128 / 128` (`100%`)** cold prefix-miss barrier requests succeed with `lockstep_warmup=False` ([`B1_cp2048_barrier_lockstep_off.json`](./results/sglang-jax-v7x-16-b1-b2/B1_cp2048_barrier_lockstep_off.json)).
+
+### 2C.2 `Run B2` — Standalone `NEXTN` Decode (`ISL = 44`) vs Colocated (`ISL = 20.4K`) on `16` Physical Chips (`OSL = 1,024`)
+
+*(Per-chip columns divide by `16` physical `v7x` chips; **`P90_low`** is the 10th-percentile slowest-stream decode TPS.)*
+
+| Scenario | `n` (`seqs/chip`) | Operating Point | Steady Out (`tok/s`) / Drain (`tok/s`) | **Out / Physical Chip (`tok/s`)** | Median Stream TPS | **`P90_low` TPS** | `[SPEC-STEP-TIMING]` `verify / draft_4 / total` (`ms` P50) | Sharded `HBM3e` BW Util | Result JSON |
+|---|---:|---|---:|---:|---:|---:|---|---:|---|
+| **Pure Decode (`ISL=44`)** | `8` (`0.5`) | Pass `P90_low>=50` | `555.1` / `558.6` | `34.7` | `80.66` | **`71.71`** | `56.36 / 6.92 (10.9%) / 63.69` | `12.93%` | [`B2_isl1.json`](./results/sglang-jax-v7x-16-b1-b2/B2_glm53_decode_isl1.json) |
+| **Pure Decode (`ISL=44`)** | `16` (`1.0`) | Pass `P90_low>=50` | `1,155.0` / `1,140.7` | `72.2` | **`83.61`** | **`73.65`** | `53.62 / 6.86 (11.3%) / 60.83` | **`15.68%`** | [`B2_isl1.json`](./results/sglang-jax-v7x-16-b1-b2/B2_glm53_decode_isl1.json) |
+| **Pure Decode (`ISL=44`)** | **`32` (`2.0`)** | **`GATE-COMPLIANT`** | **`2,043.0` / `1,995.3`** | **`127.7`** | **`73.12`** | **`54.85`** | `59.85 / 7.69 (11.3%) / 68.12` | `14.78%` | [`B2_isl1.json`](./results/sglang-jax-v7x-16-b1-b2/B2_glm53_decode_isl1.json) |
+| **Pure Decode (`ISL=44`)** | `64` (`4.0`) | High-Throughput | `3,534.1` / `3,446.0` | `220.9` | `63.13` | `31.26` | `67.61 / 8.04 (10.6%) / 75.91` | `13.42%` | [`B2_isl1.json`](./results/sglang-jax-v7x-16-b1-b2/B2_glm53_decode_isl1.json) |
+| **Pure Decode (`ISL=44`)** | **`128` (`8.0`)** | **`MAX-THROUGHPUT`** | **`5,071.0` / `4,702.4`** | **`316.9`** | `46.31` | `24.60` | `93.11 / 9.40 (9.2%) / 102.67` | `9.97%` | [`B2_isl1.json`](./results/sglang-jax-v7x-16-b1-b2/B2_glm53_decode_isl1.json) · [`step_summary`](./results/sglang-jax-v7x-16-b1-b2/B2_spec_step_and_xplane_summary.json) |
+| **Colocated (`20.4K`, `89.9%` hit)** | `8` → `128` | Colocated ceiling | `379.7` → **`1,733.5`** | `23.7` → **`108.3`** | `57.21` → `16.16` | `30.37` → `12.36` | Interleaved `cp=2048` prefill + decode | — | [`B2_isl20k.json`](./results/sglang-jax-v7x-16-b1-b2/B2_glm53_decode_isl20k.json) |
+
+---
+
 ## 3. Repository Structure & Reproducing the Benchmarks
 
 - [`docker/Dockerfile`](./docker/Dockerfile): benchmark image built on `vllm/vllm-tpu:nightly-20261029-75749f8-2fb320d`. It adds `SemiAnalysisAI/InferenceX@f6c1f5b5`, the GCS/Run:AI streaming dependencies and the scripts below.
-- [`scripts/run_tpu_benchmark_sweep.py`](./scripts/run_tpu_benchmark_sweep.py): the benchmark driver. It covers OpenAI SSE streaming, `0%` / `80%` / `95%` prefix-cache runs, and the `InferenceX` runs.
+- [`scripts/run_tpu_benchmark_sweep.py`](./scripts/run_tpu_benchmark_sweep.py) & [`scripts/bench_glm_ds_standalone.py`](./scripts/bench_glm_ds_standalone.py): OpenAI SSE streaming, `0%` / `80%` / `95%` prefix-cache, `InferenceX`, and `SGLang-JAX` `B1`/`B2` benchmark drivers.
+- [`scripts/wrapper_tcp.py`](./scripts/wrapper_tcp.py), [`scripts/patch_decode_multi_prefill.py`](./scripts/patch_decode_multi_prefill.py), [`scripts/patch_mini_lb_rr_decode.py`](./scripts/patch_mini_lb_rr_decode.py), [`scripts/launch_c2_slice.sh`](./scripts/launch_c2_slice.sh), [`scripts/run_c2a_1p2d_live.sh`](./scripts/run_c2a_1p2d_live.sh), [`scripts/run_c2b_2p1d_live.sh`](./scripts/run_c2b_2p1d_live.sh): multi-slice `SGLang-JAX` `1P2D` / `2P1D` TCP KV-transfer patches and disaggregated launchers.
 - [`scripts/stage_hf_to_gcs.py`](./scripts/stage_hf_to_gcs.py): parallel Hugging Face → GCS checkpoint stager.
-- [`scripts/glm53_roofline.py`](./scripts/glm53_roofline.py): memory and MXU roofline calculator for `GLM-5.3` on TPU.
+- [`scripts/glm53_roofline.py`](./scripts/glm53_roofline.py) & [`scripts/dsv41_glm53_roofline.py`](./scripts/dsv41_glm53_roofline.py): memory and MXU roofline calculators for `GLM-5.3` on TPU.
 - [`k8s/`](./k8s/): GKE LeaderWorkerSet and benchmark Job YAML manifests for `v7x-16`, `v5p-16` and `v6e-16/32`. The `v6e` manifests are included for reference only; this README reports no `v6e` results.
-- [`results/`](./results/README.md): raw JSON and Markdown benchmark outputs from the `v7x-16` and `v5p-16` sweeps.
+- [`results/`](./results/README.md): raw JSON and Markdown benchmark outputs from the `v7x-16` (`vllm-torchtpu` & `SGLang-JAX`) and `v5p-16` sweeps.
 
 ```bash
 # 0. Build and push the benchmark image, then set the image path in the k8s manifests

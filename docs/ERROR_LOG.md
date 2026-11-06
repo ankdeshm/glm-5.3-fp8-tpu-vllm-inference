@@ -46,3 +46,13 @@ This document records experimental `GLM-5.3 FP8` (`743.91B` total / `40.83B` act
   - Calling `POST /stop_profile` on multi-host `SGLang-JAX` `2x2x4` returned `HTTP 500` even though `.xplane.pb` trace files were successfully flushed to `/dev/shm`, and the minimal serving container omitted `tensorboard_plugin_profile`.
 - **Workaround:**
   - Treat `/stop_profile` HTTP 500 as non-fatal after verifying `.xplane.pb` file creation, sync `/dev/shm/.../profiles/` to GCS, and parse `.xplane.pb` in an analysis environment with `xprof` / `tensorboard-plugin-profile` installed.
+
+---
+
+## 5. `JAX 0.11.1` `jax.experimental.transfer` Multi-Host `TransferServer::Connect` Deadlock (`1P2D` & `2P1D`)
+
+- **Observed Issue:**
+  - In `24`-chip (`48` TensorCores) `1P2D` / `2P1D` deployments (`nnodes=2, TP=16, DP=8, EP=16` per sub-slice), `jax.experimental.transfer.start_transfer_server(jax.local_devices()[0].client, ...)` binds to the multi-host (`nnodes=2`) PJRT client, whose C++ `TransferServer::Connect(remote_addr)` performs an internal cross-host PJRT collective rendezvous. When `NP0` and `NP1` independently pull local `8`-device FP8 Sparse-MLA KV shards from `P_NP0:19000` and `P_NP1:19000`, one host completes `4/4` pulls while the sibling host deadlocks inside `Connect()`, stalling `_drain_transfer_queue_synced`.
+- **Verified Solution ([`scripts/wrapper_tcp.py`](../scripts/wrapper_tcp.py)):**
+  - Replace `sgl_jax/srt/disaggregation/jax_transfer/wrapper.py` with [`scripts/wrapper_tcp.py`](../scripts/wrapper_tcp.py), a drop-in per-process multi-peer TCP `JaxTransferWrapper` using persistent `TCP_NODELAY` socket pools and `.view(np.uint8)` serialization for `ml_dtypes.float8_e4m3fn` / `bfloat16` shards, eliminating the PJRT collective `Connect()` barrier across both `1P2D` and `2P1D`.
+

@@ -1,0 +1,302 @@
+[
+  {
+    "mode": "decode_profile",
+    "label": "B2_isl20k_16chips",
+    "target_decode_isl": 20480,
+    "num_sessions": 8,
+    "num_chips": 16,
+    "dp_size": 16,
+    "batch_per_chip": 0.5,
+    "batch_per_dp_rank": 0.5,
+    "duration_window_s": 150.0,
+    "drain_wall_s": 165.115,
+    "total_requests": 60,
+    "ok_requests": 60,
+    "failed_requests": 0,
+    "finish_reason_distribution": {
+      "length": 60
+    },
+    "mean_prompt_tokens": 20373.8,
+    "mean_cached_tokens": 18316.8,
+    "observed_cache_hit_pct": 89.9,
+    "mean_completion_tokens": 1024.0,
+    "throughput": {
+      "window_output_tok_per_s": 379.67,
+      "window_output_tok_per_s_per_chip": 23.73,
+      "drain_output_tok_per_s": 372.1,
+      "drain_output_tok_per_s_per_chip": 23.26
+    },
+    "stream_tps_in_window": {
+      "mean": 55.17,
+      "p50": 55.67,
+      "p90_low": 29.27,
+      "p95_low": 27.38,
+      "p90_hi": 70.29
+    },
+    "stream_tps_all_ok": {
+      "mean": 57.07,
+      "p50": 57.21,
+      "p90_low": 30.37,
+      "p95_low": 27.48,
+      "p90_hi": 79.62
+    },
+    "ttft_all_ok_s": {
+      "mean": 1.2405,
+      "p50": 0.9674,
+      "p90": 2.2056,
+      "p99": 2.2632
+    },
+    "ttft_in_window_s": {
+      "mean": 1.228,
+      "p50": 0.9686,
+      "p90": 2.206,
+      "p99": 2.2632
+    },
+    "metrics_deltas": {},
+    "profile": {
+      "output_dir": "/dev/shm/atlas_glm53/profiles/isl20480_n8",
+      "start_resp": "Start profiling.\n",
+      "stop_resp": "Internal Server Error"
+    }
+  },
+  {
+    "mode": "decode_profile",
+    "label": "B2_isl20k_16chips",
+    "target_decode_isl": 20480,
+    "num_sessions": 16,
+    "num_chips": 16,
+    "dp_size": 16,
+    "batch_per_chip": 1.0,
+    "batch_per_dp_rank": 1.0,
+    "duration_window_s": 150.0,
+    "drain_wall_s": 162.22,
+    "total_requests": 89,
+    "ok_requests": 89,
+    "failed_requests": 0,
+    "finish_reason_distribution": {
+      "length": 89
+    },
+    "mean_prompt_tokens": 20405.7,
+    "mean_cached_tokens": 18351.5,
+    "observed_cache_hit_pct": 89.93,
+    "mean_completion_tokens": 1024.0,
+    "throughput": {
+      "window_output_tok_per_s": 553.16,
+      "window_output_tok_per_s_per_chip": 34.57,
+      "drain_output_tok_per_s": 561.81,
+      "drain_output_tok_per_s_per_chip": 35.11
+    },
+    "stream_tps_in_window": {
+      "mean": 43.13,
+      "p50": 42.11,
+      "p90_low": 20.7,
+      "p95_low": 19.96,
+      "p90_hi": 59.7
+    },
+    "stream_tps_all_ok": {
+      "mean": 45.83,
+      "p50": 42.84,
+      "p90_low": 20.83,
+      "p95_low": 20.19,
+      "p90_hi": 66.44
+    },
+    "ttft_all_ok_s": {
+      "mean": 1.6605,
+      "p50": 0.9745,
+      "p90": 2.5491,
+      "p99": 5.6872
+    },
+    "ttft_in_window_s": {
+      "mean": 1.7916,
+      "p50": 0.9813,
+      "p90": 2.5997,
+      "p99": 9.7953
+    },
+    "metrics_deltas": {},
+    "profile": {
+      "output_dir": "/dev/shm/atlas_glm53/profiles/isl20480_n16",
+      "start_resp": "Start profiling.\n",
+      "stop_resp": "Internal Server Error"
+    }
+  },
+  {
+    "mode": "decode_profile",
+    "label": "B2_isl20k_16chips",
+    "target_decode_isl": 20480,
+    "num_sessions": 32,
+    "num_chips": 16,
+    "dp_size": 16,
+    "batch_per_chip": 2.0,
+    "batch_per_dp_rank": 2.0,
+    "duration_window_s": 150.0,
+    "drain_wall_s": 164.644,
+    "total_requests": 136,
+    "ok_requests": 136,
+    "failed_requests": 0,
+    "finish_reason_distribution": {
+      "length": 136
+    },
+    "mean_prompt_tokens": 20410.3,
+    "mean_cached_tokens": 18352.0,
+    "observed_cache_hit_pct": 89.92,
+    "mean_completion_tokens": 1024.0,
+    "throughput": {
+      "window_output_tok_per_s": 860.11,
+      "window_output_tok_per_s_per_chip": 53.76,
+      "drain_output_tok_per_s": 845.85,
+      "drain_output_tok_per_s_per_chip": 52.87
+    },
+    "stream_tps_in_window": {
+      "mean": 32.76,
+      "p50": 29.96,
+      "p90_low": 18.94,
+      "p95_low": 18.23,
+      "p90_hi": 51.51
+    },
+    "stream_tps_all_ok": {
+      "mean": 35.28,
+      "p50": 31.39,
+      "p90_low": 19.57,
+      "p95_low": 18.42,
+      "p90_hi": 56.12
+    },
+    "ttft_all_ok_s": {
+      "mean": 2.6985,
+      "p50": 1.819,
+      "p90": 5.1069,
+      "p99": 22.7716
+    },
+    "ttft_in_window_s": {
+      "mean": 3.0903,
+      "p50": 1.9763,
+      "p90": 5.154,
+      "p99": 22.7852
+    },
+    "metrics_deltas": {},
+    "profile": {
+      "output_dir": "/dev/shm/atlas_glm53/profiles/isl20480_n32",
+      "start_resp": "Start profiling.\n",
+      "stop_resp": "Internal Server Error"
+    }
+  },
+  {
+    "mode": "decode_profile",
+    "label": "B2_isl20k_16chips",
+    "target_decode_isl": 20480,
+    "num_sessions": 64,
+    "num_chips": 16,
+    "dp_size": 16,
+    "batch_per_chip": 4.0,
+    "batch_per_dp_rank": 4.0,
+    "duration_window_s": 150.0,
+    "drain_wall_s": 168.614,
+    "total_requests": 207,
+    "ok_requests": 207,
+    "failed_requests": 0,
+    "finish_reason_distribution": {
+      "length": 207
+    },
+    "mean_prompt_tokens": 20408.1,
+    "mean_cached_tokens": 18353.5,
+    "observed_cache_hit_pct": 89.93,
+    "mean_completion_tokens": 1024.0,
+    "throughput": {
+      "window_output_tok_per_s": 1275.97,
+      "window_output_tok_per_s_per_chip": 79.75,
+      "drain_output_tok_per_s": 1257.12,
+      "drain_output_tok_per_s_per_chip": 78.57
+    },
+    "stream_tps_in_window": {
+      "mean": 22.64,
+      "p50": 20.71,
+      "p90_low": 15.83,
+      "p95_low": 15.17,
+      "p90_hi": 29.39
+    },
+    "stream_tps_all_ok": {
+      "mean": 25.43,
+      "p50": 22.15,
+      "p90_low": 16.72,
+      "p95_low": 15.45,
+      "p90_hi": 37.79
+    },
+    "ttft_all_ok_s": {
+      "mean": 2.9768,
+      "p50": 2.0672,
+      "p90": 6.0955,
+      "p99": 9.4547
+    },
+    "ttft_in_window_s": {
+      "mean": 3.5493,
+      "p50": 2.6552,
+      "p90": 8.1581,
+      "p99": 9.4555
+    },
+    "metrics_deltas": {},
+    "profile": {
+      "output_dir": "/dev/shm/atlas_glm53/profiles/isl20480_n64",
+      "start_resp": "Start profiling.\n",
+      "stop_resp": "Internal Server Error"
+    }
+  },
+  {
+    "mode": "decode_profile",
+    "label": "B2_isl20k_16chips",
+    "target_decode_isl": 20480,
+    "num_sessions": 128,
+    "num_chips": 16,
+    "dp_size": 16,
+    "batch_per_chip": 8.0,
+    "batch_per_dp_rank": 8.0,
+    "duration_window_s": 150.0,
+    "drain_wall_s": 178.355,
+    "total_requests": 314,
+    "ok_requests": 314,
+    "failed_requests": 0,
+    "finish_reason_distribution": {
+      "length": 314
+    },
+    "mean_prompt_tokens": 20405.0,
+    "mean_cached_tokens": 18351.7,
+    "observed_cache_hit_pct": 89.94,
+    "mean_completion_tokens": 1024.0,
+    "throughput": {
+      "window_output_tok_per_s": 1733.48,
+      "window_output_tok_per_s_per_chip": 108.34,
+      "drain_output_tok_per_s": 1802.79,
+      "drain_output_tok_per_s_per_chip": 112.67
+    },
+    "stream_tps_in_window": {
+      "mean": 15.56,
+      "p50": 15.08,
+      "p90_low": 11.83,
+      "p95_low": 11.28,
+      "p90_hi": 19.98
+    },
+    "stream_tps_all_ok": {
+      "mean": 18.65,
+      "p50": 16.16,
+      "p90_low": 12.36,
+      "p95_low": 11.72,
+      "p90_hi": 29.33
+    },
+    "ttft_all_ok_s": {
+      "mean": 5.3437,
+      "p50": 3.2898,
+      "p90": 13.3388,
+      "p99": 18.2557
+    },
+    "ttft_in_window_s": {
+      "mean": 7.3915,
+      "p50": 6.5272,
+      "p90": 15.3196,
+      "p99": 18.2599
+    },
+    "metrics_deltas": {},
+    "profile": {
+      "output_dir": "/dev/shm/atlas_glm53/profiles/isl20480_n128",
+      "start_resp": "Start profiling.\n",
+      "stop_resp": "Internal Server Error"
+    }
+  }
+]
